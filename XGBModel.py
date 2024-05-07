@@ -134,7 +134,7 @@ class XGBModel(LGBModel):
         oof_test_preds = np.zeros(self.X_test.shape[0]) 
 
         # OOF 방식으로 모델 훈련, 검증, 예측
-        for idx, (train_idx, valid_idx) in enumerate(folds.split(X, y)):
+        for idx, (train_idx, valid_idx) in enumerate(folds.split(self.X, self.y)):
             # 각 폴드를 구분하는 문구 출력
             print('#'*40, f'폴드 {idx+1} / 폴드 {folds.n_splits}', '#'*40)
             
