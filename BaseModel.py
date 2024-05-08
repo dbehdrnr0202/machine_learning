@@ -42,6 +42,21 @@ def eval_gini(y_true, y_pred):
     return G_pred / G_true
 
 class BaseModel:
+    '''
+    Usage to Use BaseModel
+    
+    model = BaseModel()
+    model.load_data(data_path="data/")
+    model.preprocessing()
+    model.fit_model(params = {'objective': 'binary',
+          'learning_rate': 0.01,
+          'force_row_wise': True,
+          'random_state': 0},
+          train_params={'num_boost_round':1000,
+                        'feval':gini,
+                        'callbacks':[lgb.early_stopping(stopping_rounds=100), lgb.log_evaluation(100)]})
+    model.save_submission("output/base_submission.csv")
+    '''
     def __init__(self) -> None:
         self.data_path = ""
         self.train = pd.DataFrame()
@@ -66,7 +81,6 @@ class BaseModel:
         # 인코딩
         encoded_cat_matrix = onehot_encoder.fit_transform(self.all_data[cat_features]) 
 
-        encoded_cat_matrix
         # 추가로 제거할 피처
         drop_features = ['ps_ind_14', 'ps_ind_10_bin', 'ps_ind_11_bin', 
                         'ps_ind_12_bin', 'ps_ind_13_bin', 'ps_car_14']
@@ -158,6 +172,38 @@ class BaseModel:
             print(f'폴드 {idx+1} 지니계수 : {gini_score}\n')
             self.submission['target'] = oof_test_preds
     
+    def test_model(self, threshold:float=0.5):
+        folds = StratifiedKFold(n_splits=5, shuffle=True, random_state=1991)
+        # OOF 방식으로 훈련된 모델로 검증 데이터 타깃값을 예측한 확률을 담을 1차원 배열
+        oof_val_preds = np.zeros(self.X.shape[0]) 
+        # OOF 방식으로 훈련된 모델로 테스트 데이터 타깃값을 예측한 확률을 담을 1차원 배열
+        oof_test_preds_prob = np.zeros(self.X_test.shape[0])
+        for idx, (train_idx, valid_idx) in enumerate(folds.split(self.X, self.y)):
+            # 각 폴드를 구분하는 문구 출력
+            print('#'*40, f'폴드 {idx+1} / 폴드 {folds.n_splits}', '#'*40)
+            
+            # 훈련용 데이터, 검증용 데이터 설정 
+            X_valid, y_valid = self.X[valid_idx], self.y[valid_idx] # 검증용 데이터
+
+            # 테스트 데이터를 활용해 OOF 예측
+            oof_test_preds_prob += self.model.predict(self.X_test)/folds.n_splits
+            
+            # 모델 성능 평가를 위한 검증 데이터 타깃값 예측
+            oof_val_preds[valid_idx] += self.model.predict(X_valid)
+            
+            ###
+            valid_pred_prob = self.model.predict(X_valid)
+            valid_pred = np.where(valid_pred_prob>threshold, 1, 0)
+            print("validation score")
+            get_clf_eval(y_test=y_valid, pred=valid_pred, pred_proba_prob=valid_pred_prob)
+            ###
+            
+        oof_test_preds = np.where(oof_test_preds_prob>threshold, 1, 0)
+        print("oof test score")
+        get_clf_eval(y_test=self.y, )
+        
+    
+    
     def save_submission(self, file_path):    
         self.submission.to_csv(file_path)
             
@@ -172,4 +218,6 @@ if __name__=="__main__":
           train_params={'num_boost_round':1000,
                         'feval':gini,
                         'callbacks':[lgb.early_stopping(stopping_rounds=100), lgb.log_evaluation(100)]})
+    for threshold in np.arange(0, 1, 0.1):
+        model.test_model(threshold=threshold)
     model.save_submission("output/base_submission2.csv")
