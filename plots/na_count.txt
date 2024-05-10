@@ -1,0 +1,13 @@
+ps_ind_02_cat 	 216
+ps_ind_04_cat 	 83
+ps_ind_05_cat 	 5809
+ps_reg_03 	 107772
+ps_car_01_cat 	 107
+ps_car_02_cat 	 5
+ps_car_03_cat 	 411231
+ps_car_05_cat 	 266551
+ps_car_07_cat 	 11489
+ps_car_09_cat 	 569
+ps_car_11 	 5
+ps_car_12 	 1
+ps_car_14 	 42620

@@ -1,9 +1,12 @@
 from LGBModel import *
-import XGBModel as xgb
+import xgboost as xgb
 
 class XGBModel(LGBModel):
     def __init__(self) -> None:
         super().__init__()
+    
+    def __init__(self, fixed_params:dict)->None:
+        super().__init__(fixed_params)
     
     def preprocessing(self):
         all_data = pd.concat([self.train, self.test], ignore_index=True)
@@ -111,7 +114,7 @@ class XGBModel(LGBModel):
         return gini_score
     
     def optimize(self, param_bounds):
-        optimizer = BayesianOptimization(f=self.__eval_function,      # 평가지표 계산 함수
+        optimizer = BayesianOptimization(f=self.eval_function,      # 평가지표 계산 함수
                                         pbounds=param_bounds, # 하이퍼파라미터 범위
                                         random_state=0)    
         # 베이지안 최적화 수행
@@ -147,31 +150,33 @@ class XGBModel(LGBModel):
             dvalid = xgb.DMatrix(X_valid, y_valid)
             dtest = xgb.DMatrix(self.X_test)
             # XGBoost 모델 훈련
-            self.model = xgb.train(params=params, 
+            evals = [(dvalid, 'dvalid')]
+            xgb_model = xgb.train(params=params, 
                                 dtrain=dtrain,
                                 num_boost_round=train_params['num_boost_round'],
-                                evals=train_params['evals'],
+                                evals=evals,
                                 maximize=train_params['maximize'],
                                 feval=train_params['feval'],
                                 early_stopping_rounds=train_params['early_stopping_rounds'],
                                 verbose_eval=train_params['verbose_eval'])
 
             # 모델 성능이 가장 좋을 때의 부스팅 반복 횟수 저장
-            best_iter = self.model.best_iteration
+            best_iter = xgb_model.best_iteration
             # 테스트 데이터를 활용해 OOF 예측
-            oof_test_preds += self.model.predict(dtest, iteration_range=(0, best_iter))/folds.n_splits
+            oof_test_preds += xgb_model.predict(dtest, iteration_range=(0, best_iter))/folds.n_splits
             
             # 모델 성능 평가를 위한 검증 데이터 타깃값 예측 
-            oof_val_preds[valid_idx] += self.model.predict(dvalid, iteration_range=(0, best_iter))
+            oof_val_preds[valid_idx] += xgb_model.predict(dvalid, iteration_range=(0, best_iter))
             
-            valid_pred_prob = self.model.predict(dvalid, iteration_range=(0, best_iter))
+            valid_pred_prob = xgb_model.predict(dvalid, iteration_range=(0, best_iter))
             valid_pred = np.where(valid_pred_prob>0.5, 1, 0)
             get_clf_eval(y_test=y_valid, pred=valid_pred, pred_proba_prob=valid_pred_prob)
 
             # 검증 데이터 예측 확률에 대한 정규화 지니계수
             gini_score = eval_gini(y_valid, oof_val_preds[valid_idx])
             print(f'폴드 {idx+1} 지니계수 : {gini_score}\n')
-
+            self.model = xgb_model
+            
 if __name__=="__main__":
     # 베이지안 최적화를 위한 하이퍼파라미터 범위
     param_bounds = {'max_depth': (4, 8),
@@ -190,11 +195,36 @@ if __name__=="__main__":
     model = XGBModel(fixed_params)
     model.load_data(data_path="data/")
     model.preprocessing()
-    max_params = model.optimize(param_bounds=param_bounds)
-    print(max_params)
+    # max_params = model.optimize(param_bounds=param_bounds)
+    # print(max_params)
+    max_params = {'colsample_bytree': 1.0,
+        'gamma': 8.75239267900182,
+        'max_depth': 7,
+        'min_child_weight': 7.0,
+        'reg_alpha': 7.0,
+        'reg_lambda': 1.282397381262159,
+        'scale_pos_weight': 1.4538566545153988,
+        'subsample': 0.7102431062533778,
+        'objective': 'binary:logistic',
+        'learning_rate': 0.02,
+        'random_state': 1991}
+    
     model.fit_model(params = max_params,
           train_params={'num_boost_round':2000,
                         'maximize':True,
                         'feval':gini,
                         'early_stopping_rounds':200,
-                        'verbose_eval':100})
+                        'verbose_eval':100,
+                        'n_splits':5})
+    accuracy, precision, recall, f1 = 0, 0, 0, 0
+    best_threshold = 0
+    for threshold in np.arange(0, 0.3, 0.001):
+        valid_accuracy, valid_precision, valid_recall, valid_f1 = model.test_model(threshold=threshold)
+        if valid_f1>f1:
+            f1, best_threshold = valid_f1, threshold
+    
+    print('#'*80)
+    print(f"최적 parameters: {max_params}")
+    print(f"최적 threshold: {best_threshold}")
+    print(model.test_model(threshold=best_threshold))
+    

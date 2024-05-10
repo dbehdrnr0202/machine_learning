@@ -12,11 +12,14 @@ def get_clf_eval(y_test, pred=None, pred_proba_prob=None):
     precision = precision_score(y_test, pred)
     recall = recall_score(y_test, pred)
     f1 = f1_score(y_test, pred)
-    auc = roc_auc_score(y_test, pred_proba_prob)
+    auc = 0
+    if pred_proba_prob:
+        auc = roc_auc_score(y_test, pred_proba_prob)
     print("오차 행렬")
     print(confusion)
     print(f"정확도: {accuracy:.4f}, 정밀도: {precision:.4f}, 재현율: {recall:.4f}, F1: {f1:.4f}, AUC: {auc:.4f}")
-
+    return confusion, accuracy, precision, recall, f1, auc
+    
 def gini(preds, dtrain):
     labels = dtrain.get_label()
     return 'gini', eval_gini(labels, preds), True # 반환값
@@ -128,11 +131,12 @@ class BaseModel:
 
 
     def fit_model(self, params:dict, train_params:dict):
-        folds = StratifiedKFold(n_splits=5, shuffle=True, random_state=1991)
+        folds = StratifiedKFold(n_splits=train_params['n_splits'], shuffle=True, random_state=1991)
         # OOF 방식으로 훈련된 모델로 검증 데이터 타깃값을 예측한 확률을 담을 1차원 배열
         oof_val_preds = np.zeros(self.X.shape[0]) 
         # OOF 방식으로 훈련된 모델로 테스트 데이터 타깃값을 예측한 확률을 담을 1차원 배열
         oof_test_preds = np.zeros(self.X_test.shape[0])
+        self.valid_pred_prob = [[] for _ in range(train_params['n_splits'])]
         for idx, (train_idx, valid_idx) in enumerate(folds.split(self.X, self.y)):
             # 각 폴드를 구분하는 문구 출력
             print('#'*40, f'폴드 {idx+1} / 폴드 {folds.n_splits}', '#'*40)
@@ -162,9 +166,7 @@ class BaseModel:
             oof_val_preds[valid_idx] += self.model.predict(X_valid)
             
             ###
-            valid_pred_prob = self.model.predict(X_valid)
-            valid_pred = np.where(valid_pred_prob>0.5, 1, 0)
-            get_clf_eval(y_test=y_valid, pred=valid_pred, pred_proba_prob=valid_pred_prob)
+            self.valid_pred_prob[idx] = self.model.predict(X_valid)
             ###
             
             # 검증 데이터 예측 확률에 대한 정규화 지니계수 
@@ -174,35 +176,19 @@ class BaseModel:
     
     def test_model(self, threshold:float=0.5):
         folds = StratifiedKFold(n_splits=5, shuffle=True, random_state=1991)
-        # OOF 방식으로 훈련된 모델로 검증 데이터 타깃값을 예측한 확률을 담을 1차원 배열
-        oof_val_preds = np.zeros(self.X.shape[0]) 
-        # OOF 방식으로 훈련된 모델로 테스트 데이터 타깃값을 예측한 확률을 담을 1차원 배열
-        oof_test_preds_prob = np.zeros(self.X_test.shape[0])
-        for idx, (train_idx, valid_idx) in enumerate(folds.split(self.X, self.y)):
-            # 각 폴드를 구분하는 문구 출력
-            print('#'*40, f'폴드 {idx+1} / 폴드 {folds.n_splits}', '#'*40)
-            
-            # 훈련용 데이터, 검증용 데이터 설정 
-            X_valid, y_valid = self.X[valid_idx], self.y[valid_idx] # 검증용 데이터
+        accuracy, precision, recall, f1 = 0, 0, 0, 0
+        for idx, (_, valid_idx) in enumerate(folds.split(self.X, self.y)):
+            _, y_valid = self.X[valid_idx], self.y[valid_idx] # 검증용 데이터
 
-            # 테스트 데이터를 활용해 OOF 예측
-            oof_test_preds_prob += self.model.predict(self.X_test)/folds.n_splits
-            
-            # 모델 성능 평가를 위한 검증 데이터 타깃값 예측
-            oof_val_preds[valid_idx] += self.model.predict(X_valid)
-            
-            ###
-            valid_pred_prob = self.model.predict(X_valid)
-            valid_pred = np.where(valid_pred_prob>threshold, 1, 0)
-            print("validation score")
-            get_clf_eval(y_test=y_valid, pred=valid_pred, pred_proba_prob=valid_pred_prob)
-            ###
-            
-        oof_test_preds = np.where(oof_test_preds_prob>threshold, 1, 0)
-        print("oof test score")
-        get_clf_eval(y_test=self.y, )
-        
-    
+            valid_pred = np.where(self.valid_pred_prob[idx]>threshold, 1, 0)
+            _, valid_accuracy, valid_precision, valid_recall, valid_f1, _ = get_clf_eval(y_test=y_valid, pred=valid_pred)
+            accuracy+=valid_accuracy/folds.n_splits
+            precision+=valid_precision/folds.n_splits
+            recall+=valid_recall/folds.n_splits
+            f1+=valid_f1/folds.n_splits
+            ###        
+        print(f"정확도: {accuracy}, 정밀도: {precision}, 재현율: {recall}, F1: {f1}")
+        return accuracy, precision, recall, f1
     
     def save_submission(self, file_path):    
         self.submission.to_csv(file_path)
@@ -217,7 +203,17 @@ if __name__=="__main__":
           'random_state': 0},
           train_params={'num_boost_round':1000,
                         'feval':gini,
-                        'callbacks':[lgb.early_stopping(stopping_rounds=100), lgb.log_evaluation(100)]})
-    for threshold in np.arange(0, 1, 0.1):
-        model.test_model(threshold=threshold)
-    model.save_submission("output/base_submission2.csv")
+                        'callbacks':[lgb.early_stopping(stopping_rounds=100), lgb.log_evaluation(100)],
+                        'n_splits':5})
+    accuracy, precision, recall, f1 = 0, 0, 0, 0
+    best_threshold = 0
+    for threshold in np.arange(0, 0.3, 0.001):
+        valid_accuracy, valid_precision, valid_recall, valid_f1 = model.test_model(threshold=threshold)
+        if valid_f1>f1:
+            f1, best_threshold = valid_f1, threshold
+    
+    print('#'*80)
+    print(f"최적 threshold: {best_threshold}")
+    print(model.test_model(threshold=best_threshold))
+    
+    # model.save_submission("output/base_submission2.csv")

@@ -135,10 +135,24 @@ if __name__=="__main__":
     model.load_data(data_path="data/")
     model.preprocessing()
     max_params = model.optimize(param_bounds=param_bounds)
-    print(max_params)
+
+    print(f"최적 파라미터: {max_params}")
     model.fit_model(params = max_params,
           train_params={'num_boost_round':2500,
                         'feval':gini,
+                        'n_splits':5,
                         'callbacks':[lgb.early_stopping(stopping_rounds=300), lgb.log_evaluation(100)]})
-    model.save_submission("output/lgb_submission2.csv")
+    
+    accuracy, precision, recall, f1 = 0, 0, 0, 0
+    best_threshold = 0
+    for threshold in np.arange(0, 0.3, 0.001):
+        valid_accuracy, valid_precision, valid_recall, valid_f1 = model.test_model(threshold=threshold)
+        if valid_f1>f1:
+            f1, best_threshold = valid_f1, threshold
+    
+    print('#'*80)
+    print(f"최적 threshold: {best_threshold}")
+    print(model.test_model(threshold=best_threshold))
+    
+    # model.save_submission("output/lgb_submission2.csv")
     
